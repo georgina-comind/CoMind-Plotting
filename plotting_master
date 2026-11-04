@@ -1,0 +1,90 @@
+# use this script to fit the data and save the fits in the /datapath/fits folder
+
+# Author: Veronika Parfentyeva
+# Date: 2026-05-05
+
+# %%
+
+import numpy as np
+from comind_utils.dsp.g1_processing import G1Processing, G1ProcessingParams
+from comind_utils.g1.fitting.generic import G1FittingParams
+from comind_utils.g1.fitting.sexp import UnormalisedSingleExp
+import os
+import glob
+import h5py
+
+# %%
+
+path2data = '/knox2/data3/to_data/veronika_playground/20260901_tcd_data_drop_tests/TDT-020-001'
+# chekc if fits folder already exists
+if not os.path.exists(os.path.join(path2data, 'fits')):
+    os.makedirs(os.path.join(path2data, 'fits'))
+
+output_folder = os.path.join(path2data, 'fits')
+
+folders = glob.glob(path2data + '/20*')
+folders.sort()
+
+# %% load and fit the data
+
+# =========================
+# PROCESSING & FITTINGPARAMS
+# =========================
+
+
+proc_params = G1ProcessingParams(
+            normalisation="none",
+            lag_slicing=slice(0, 21),
+            tpsf_tof_roi=(-30, 60),
+            G1_tof_roi=np.asarray([-0.5e-9, 1.6e-9]),
+            dfc=True,
+            denoising_method="kf",
+            dfc_type="template_scaling_tpsf",
+            combine_channels=False,
+            tof_dt_tracking=True,
+            t0_method="rising_edge",
+            t0_rising_edge_frac=0.5,
+            template_scale_tpsf_tof_s=None,
+            template_scale_tpsf_late_tof_s=(3.0e-9, 3.5e-9),
+            dfc_before_tail=True,
+            template_tpsf_scale_on_iterpoly=True, )
+
+fit_params = G1FittingParams(
+    g1_threshold=np.inf,
+    n_min_lags=5,
+    backend="leastsq",
+    leastsq_bounds=((0, 5e5), (0, np.inf)),
+)
+
+for i in range(len(folders)):
+    print(folders[i])
+    acq_path = folders[i]
+    file_name = folders[i].split('_')[-1]
+
+    g1_proc = G1Processing(str(acq_path), proc_params)
+    data = g1_proc.process_all()
+
+    lags = data.g1_lags
+    g1   = data.g1
+    tofs = data.g1_tof
+    times = data.g1_time
+
+    # --- Fitting ---
+    fitter = UnormalisedSingleExp(fit_params)
+    print(f"  Fitting {len(lags)} lags | g1 shape: {g1.shape}")
+    xi = fitter.fit(lags, g1, lag_axis=-1)
+
+    # --- Save ---
+    out_file = os.path.join(output_folder, f"fits_{file_name}.hdf5")
+    with h5py.File(out_file, "w") as f:
+        f.create_dataset("lags", data=lags)
+        f.create_dataset("g1",   data=g1)
+        f.create_dataset("xi",   data=xi)
+        f.create_dataset("tofs", data=tofs)
+        f.create_dataset("times", data=times)
+    print(f"  Saved -> {out_file} for {file_name}")
+
+# %%
+
+
+# %%
